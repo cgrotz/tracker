@@ -238,11 +238,17 @@ function rowsHTML(list, attr) {
   }).join('') + '</div>';
 }
 
-var searchTimer;
+// Open Food Facts throttles search hard (barcode lookups are unaffected). Every
+// request must be deliberate, so remote search never fires while typing.
+var offCalls = [];
+function offQuotaOk() {
+  var now = Date.now();
+  offCalls = offCalls.filter(function (t) { return now - t < 60000; });
+  return offCalls.length < 8;
+}
 function showPanel(date, q) {
   var panel = document.getElementById('panel');
   if (!panel) return;
-  clearTimeout(searchTimer);
   q = (q || '').trim();
   var finder = document.getElementById('finder');
   if (finder) finder.classList.toggle('searching', !!q);
@@ -265,20 +271,34 @@ function showPanel(date, q) {
     b.onclick = function () { logFood(date, mine[+b.getAttribute('data-m')]); };
   });
 
-  // Open Food Facts search is flaky and rate sensitive — never per keystroke.
-  if (q.length >= 3) searchTimer = setTimeout(function () { remoteSearch(date, q); }, 700);
-  else document.getElementById('remote').innerHTML =
-    '<p class="note">Keep typing to search Open Food Facts.</p>';
+  var remote = document.getElementById('remote');
+  if (q.length < 2) {
+    remote.innerHTML = '<p class="note">Keep typing to search Open Food Facts.</p>';
+    return;
+  }
+  if (offResults[q]) { remoteSearch(date, q); return; }   // cached, costs nothing
+  remote.innerHTML = '<div class="seclabel">Open Food Facts</div>' +
+    '<button class="btn ghost" type="button" id="dosearch">Search for “' + esc(q) + '”</button>';
+  remote.querySelector('#dosearch').onclick = function () { remoteSearch(date, q); };
 }
 
-function remoteSearch(date, q) {
+function remoteSearch(date, q, attempt) {
   var box = document.getElementById('remote');
   if (!box) return;
+  attempt = attempt || 1;
   var head = '<div class="seclabel">Open Food Facts</div>';
+  var cached = !!offResults[q];
+  if (attempt === 1 && !cached && !offQuotaOk()) {
+    box.innerHTML = head + '<p class="note">You have searched Open Food Facts several times in ' +
+      'the last minute and it is refusing more for now. Wait a few seconds and try again — ' +
+      'barcode scanning still works.</p>';
+    return;
+  }
+  if (attempt === 1 && !cached) offCalls.push(Date.now());
   box.innerHTML = head + '<p class="note">Searching…</p>';
   var stale = function () {
     var i = document.getElementById('q');
-    return !box.isConnected || !i || i.value.trim() !== q;
+    return !box.isConnected || !i || foldCase(i.value.trim()) !== foldCase(q);
   };
   offSearch(q).then(function (list) {
     if (stale()) return;
@@ -287,12 +307,14 @@ function remoteSearch(date, q) {
     Array.prototype.forEach.call(box.querySelectorAll('[data-p]'), function (b) {
       b.onclick = function () { portionSheet(date, list[+b.getAttribute('data-p')]); };
     });
-  }).catch(function () {
+  }).catch(function (err) {
     if (stale()) return;
-    // The endpoint fails often enough that a retry is worth a button.
-    box.innerHTML = head + '<p class="note">' + offError() + '</p>' +
+    // Rejections are instant and often transient; one quiet retry, then give up
+    // and let the user decide rather than hammering a throttled endpoint.
+    if (attempt < 2) { setTimeout(function () { remoteSearch(date, q, attempt + 1); }, 900); return; }
+    box.innerHTML = head + '<p class="note">' + offError(err) + '</p>' +
       '<button class="btn ghost" type="button" id="retry">Try again</button>';
-    box.querySelector('#retry').onclick = function () { remoteSearch(date, q); };
+    box.querySelector('#retry').onclick = function () { remoteSearch(date, q, 1); };
   });
 }
 
@@ -341,7 +363,8 @@ function renderHome() {
       '<div class="finder" id="finder">' +
         '<div id="panel" class="panel"></div>' +
         '<form class="searchbar" id="sb" autocomplete="off">' +
-          '<input id="q" type="search" enterkeyhint="search" placeholder="Search food" aria-label="Search food">' +
+          '<input id="q" type="search" enterkeyhint="search" placeholder="Search food" aria-label="Search food"' +
+          ' autocapitalize="off" autocorrect="off" spellcheck="false">' +
           (CAM.possible() ? '<button type="button" class="iconbtn scanbtn" id="scanbtn" aria-label="Scan barcode">' + ICON.scan + '</button>' : '') +
         '</form>' +
       '</div>' +
@@ -367,7 +390,6 @@ function renderHome() {
   form.onsubmit = function (e) {
     e.preventDefault();
     var q = input.value.trim();
-    clearTimeout(searchTimer);
     if (q.length >= 2) { showPanel(today, q); remoteSearch(today, q); }
     input.blur();
   };
@@ -674,6 +696,12 @@ function renderSettings() {
       '<button class="btn secondary" id="wt">' + (w ? 'Edit today’s weight (' + w.kg.toFixed(1) + ' kg)' : 'Log today’s weight') + '</button>' +
       '<button class="btn ghost mt" id="wy">Log a missed day</button>' +
     '</div>' +
+    '<div class="card"><h2>Food lookup</h2>' +
+      '<button class="btn secondary" id="diag">Test Open Food Facts</button>' +
+      '<div id="diagout"></div>' +
+      '<p class="note">Runs a barcode lookup and a name search and reports exactly what this ' +
+      'browser gets back. Useful when search works on one device but not another.</p>' +
+    '</div>' +
     '<div class="card"><h2>Data</h2>' +
       '<p class="note" style="margin-top:0">' + S.entries.length + ' entries · ' + S.weights.length + ' weight readings, stored only in this browser.</p>' +
       '<button class="btn danger mt" id="erase">Erase everything</button>' +
@@ -688,6 +716,36 @@ function renderSettings() {
   app.querySelector('#cap').onchange = function (e) { S.settings.capRollover = e.target.checked; save(); };
   app.querySelector('#wt').onclick = function () { weightSheet(today); };
   app.querySelector('#wy').onclick = function () { backfillSheet(); };
+  app.querySelector('#diag').onclick = function () {
+    var box = app.querySelector('#diagout');
+    box.innerHTML = '<p class="note">Testing…</p>';
+    var lines = [];
+    var probe = function (label, fn) {
+      var t0 = Date.now();
+      return fn().then(function (r) {
+        lines.push('<div class="kv"><span>' + label + '</span><span class="pos">' +
+          r + ' · ' + (Date.now() - t0) + ' ms</span></div>');
+      }, function (e) {
+        lines.push('<div class="kv"><span>' + label + '</span><span class="neg">' +
+          esc(e && e.message ? e.message : 'failed') + ' · ' + (Date.now() - t0) + ' ms</span></div>');
+      });
+    };
+    offResults = {};   // do not let a cached result mask a failure
+    probe('Barcode lookup', function () {
+      return offProduct('3017620422003').then(function (p) { return p ? 'ok' : 'no product'; });
+    }).then(function () {
+      return probe('Name search', function () {
+        return offSearch('brot' + Math.random().toString(36).slice(2, 5)).then(function (l) { return l.length + ' hits'; });
+      });
+    }).then(function () {
+      return probe('Name search (common term)', function () {
+        return offSearch('vollkornbrot').then(function (l) { return l.length + ' hits'; });
+      });
+    }).then(function () {
+      lines.push('<div class="kv"><span>Online</span><span>' + (navigator.onLine !== false) + '</span></div>');
+      box.innerHTML = lines.join('');
+    });
+  };
   app.querySelector('#erase').onclick = function () {
     if (!confirm('Delete all weights and entries from this browser? This cannot be undone.')) return;
     if (!confirm('Really erase everything?')) return;
@@ -760,9 +818,18 @@ function offNorm(p) {
   };
 }
 function offGet(url) {
-  return fetch(url).then(function (r) {
+  var ctl = window.AbortController ? new AbortController() : null;
+  var timer = ctl ? setTimeout(function () { ctl.abort(); }, 8000) : 0;
+  return fetch(url, ctl ? { signal: ctl.signal } : undefined).then(function (r) {
+    clearTimeout(timer);
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
+  }, function (e) {
+    clearTimeout(timer);
+    // Safari says "Load failed", Chrome "Failed to fetch"; both mean the request
+    // never completed — usually a missing CORS header on the response.
+    throw new Error(e && e.name === 'AbortError' ? 'timed out after 8s'
+      : (e && e.message) || 'network error');
   });
 }
 function offSearch(q) {
@@ -787,10 +854,10 @@ function offProduct(code) {
     return p;
   });
 }
-function offError() {
-  return navigator.onLine === false
-    ? 'You are offline. Your own foods still work — or add it by hand.'
-    : 'Open Food Facts did not answer. Your own foods still work — or add it by hand.';
+function offError(e) {
+  if (navigator.onLine === false) return 'You are offline. Your own foods still work — or add it by hand.';
+  return 'Open Food Facts did not answer' + (e && e.message ? ' (' + esc(e.message) + ')' : '') +
+    '. Your own foods still work — or add it by hand.';
 }
 
 /* =========================== search sheet =========================== */
@@ -826,8 +893,8 @@ function searchSheet(date, prefill) {
           Array.prototype.forEach.call(res.querySelectorAll('[data-p]'), function (b) {
             b.onclick = function () { portionSheet(date, list[+b.getAttribute('data-p')]); };
           });
-        }).catch(function () {
-          res.innerHTML = '<p class="note">' + offError() + '</p>';
+        }).catch(function (err) {
+          res.innerHTML = '<p class="note">' + offError(err) + '</p>';
         });
       };
     }
@@ -931,7 +998,7 @@ function scanSheet(date) {
             stat.innerHTML = 'Barcode <b>' + esc(code) + '</b> is not in Open Food Facts (or has no calories listed). ' +
               'Add it by hand, or search by name.';
           }
-        }).catch(function () { stat.textContent = offError(); });
+        }).catch(function (err) { stat.textContent = offError(err); });
       }
 
       navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } })

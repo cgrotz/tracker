@@ -10,8 +10,8 @@ dependencies, no build step: everything lives in `localStorage` on the device.
   slot for manual entry. One tap logs a repeat food; the confirmation toast carries
   an **Undo**, because a mis-tap would otherwise silently cost you 600 kcal.
   Below the grid sits a search box with a barcode-scan button. Typing replaces the
-  grid with results: your own foods first (matched locally, instantly), then Open
-  Food Facts below them. While searching, the search box moves above the results so
+  grid with your own matching foods, instantly and with no network. Open Food Facts
+  is searched only when you press Enter or tap the search button — see below for why. While searching, the search box moves above the results so
   it does not get pushed off-screen. A "log today's weight" button appears until you
   have weighed in, and today's entries are listed underneath; tap one to edit or delete.
 - **History** — weight trend with a 7-day average, daily intake against budget,
@@ -60,14 +60,26 @@ Adding food offers three routes: manual calories, name search, or a barcode scan
 Both lookups hit the public [Open Food Facts](https://de.openfoodfacts.org/data) API
 directly from the browser — no key, no proxy, CORS is open.
 
-- **Search** — `cgi/search.pl` on the German instance. Roughly 1.2 s per query, and
-  **it fails intermittently**: the failing responses carry no `Access-Control-Allow-Origin`
-  header, so the browser reports a CORS error and hides the status code. It recovers
-  after a pause, which looks like throttling, but that cannot be confirmed client side.
-  So search runs on submit only, never per keystroke, results are cached for the
-  session, and the failure path always offers manual entry. Treat name search as best
-  effort; barcode lookup (`/api/v2/product`) has been consistently reliable. The newer
-  `search.openfoodfacts.org` endpoint is unusable here: it sends no CORS headers at all.
+- **Search is throttled, hard.** Measured back to back from one IP after heavy use:
+  **4/4 barcode lookups succeeded at ~45 ms, 1/4 searches succeeded**. Failed searches
+  are rejected in ~60 ms with a response carrying no `Access-Control-Allow-Origin`
+  header, so the browser reports a CORS error and hides the status code. Failure rate
+  rises with how much you have searched recently and clears after a pause. Every
+  search endpoint behaves this way — the German and world `cgi/search.pl`,
+  `/api/v2/search`, and `search.openfoodfacts.org` (which additionally never returned
+  a usable CORS response in any test).
+
+  Consequences, all deliberate:
+  - Remote search **never fires while typing**. An earlier 700 ms debounce did, which
+    burned four or five requests per word on a phone — slow typing made every search
+    fail, which is exactly how this was found. It now needs Enter or a tap.
+  - A client-side guard stops at 8 remote searches per rolling minute and says so.
+  - One quiet retry after 900 ms, then the error and a **Try again** button. No
+    automatic hammering of an endpoint that is already refusing.
+  - Results are cached per session, so repeating a query is free.
+  - Barcode lookup (`/api/v2/product`) is unaffected and stays fast and reliable.
+  Settings → **Food lookup → Test Open Food Facts** runs these probes on any device
+  and reports what that browser actually gets back.
 - **Barcode** — native `BarcodeDetector` (Chrome, Android) when present; otherwise
   ZXing is pulled from a CDN *only when you tap scan*, so the offline core stays
   dependency free. Both share one `facingMode: environment` camera stream. Needs
