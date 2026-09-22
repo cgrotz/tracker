@@ -1,7 +1,7 @@
 :root{
   color-scheme: light dark;
   --bg:#f6f6f7; --panel:#ffffff; --fg:#14161a; --muted:#6b7280; --line:#e5e7eb;
-  --green:#16a34a; --yellow:#d97706; --red:#dc2626; --accent:#14161a;
+  --green:#16a34a; --yellow:#d97706; --red:#dc2626; --blue:#2563eb; --accent:#14161a;
   --track:#e8e9ec;
   --radius:16px;
   --pad:20px;
@@ -9,7 +9,7 @@
 @media (prefers-color-scheme: dark){
   :root{
     --bg:#0c0d10; --panel:#16181d; --fg:#f2f3f5; --muted:#9aa1ad; --line:#24272e;
-    --green:#22c55e; --yellow:#f59e0b; --red:#ef4444; --accent:#f2f3f5;
+    --green:#22c55e; --yellow:#f59e0b; --red:#ef4444; --blue:#3b82f6; --accent:#f2f3f5;
     --track:#24272e;
   }
 }
@@ -211,3 +211,6 @@ input:focus,select:focus{outline:2px solid var(--fg);outline-offset:-1px}
 .grid3.empty .tile.manual{grid-column:1/-1;min-height:64px}
 textarea{width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--fg);font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}
 input[type=file]{padding:10px;font-size:14px}
+.ring-goal{stroke:var(--blue);opacity:.9}
+.dgoal{display:flex;align-items:center;justify-content:center;gap:6px;color:var(--muted)}
+.dgoal::before{content:'';width:8px;height:8px;border-radius:2px;background:var(--blue);flex:none}

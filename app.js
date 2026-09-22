@@ -333,6 +333,13 @@ function remoteSearch(date, q, attempt) {
   });
 }
 
+// A ring segment: `start` and `len` are fractions of the circle, clockwise from
+// 12 o'clock (the SVG is rotated -90deg).
+function ringArc(start, len, C) {
+  return ' stroke-dasharray="' + (len * C).toFixed(1) + ' ' + ((1 - len) * C).toFixed(1) + '"' +
+         ' stroke-dashoffset="' + (-start * C).toFixed(1) + '"';
+}
+
 function renderHome() {
   var today = todayISO();
   var budget = budgetOn(today);
@@ -341,8 +348,15 @@ function renderHome() {
   var consumed = consumedOn(today);
   var left = allowance - consumed;
   var week = weekStats(today);
-  var frac = allowance > 0 ? Math.min(1, Math.max(0, consumed / allowance)) : 0;
   var state = left < 0 ? 'red' : (allowance > 0 && left / allowance <= 0.2 ? 'yellow' : 'green');
+  // The ring spans everything you could eat today if you gave up the deficit:
+  // allowance first, then the deficit goal as a blue band you are aiming to keep.
+  var maint = maintenanceOn(today);
+  var deficit = (maint != null && budget != null) ? Math.max(0, Math.round(maint - budget)) : 0;
+  var total = allowance + deficit;
+  var frac = total > 0 ? Math.min(1, Math.max(0, consumed / total)) : 0;
+  var goalStart = total > 0 ? allowance / total : 0;
+  var goalLen = total > 0 ? deficit / total : 0;
   var hasWeightToday = !!weightOn(today);
   var list = entriesOn(today);
   var R = 112, C = 2 * Math.PI * R;
@@ -359,8 +373,14 @@ function renderHome() {
         : '<div class="ringwrap">' +
             '<svg viewBox="0 0 260 260" aria-hidden="true">' +
               '<circle class="ring-track" cx="130" cy="130" r="' + R + '" fill="none" stroke-width="14"/>' +
-              '<circle class="ring-val" cx="130" cy="130" r="' + R + '" fill="none" stroke-width="14" stroke-linecap="round"' +
-                ' stroke-dasharray="' + C.toFixed(1) + '" stroke-dashoffset="' + (C * (1 - frac)).toFixed(1) + '"/>' +
+              (deficit > 0
+                ? '<circle class="ring-goal" cx="130" cy="130" r="' + R + '" fill="none" stroke-width="14"' +
+                    ringArc(goalStart, goalLen, C) + '/>'
+                : '') +
+              (frac > 0.002   // a round cap on a zero-length arc shows as a stray dot
+                ? '<circle class="ring-val" cx="130" cy="130" r="' + R + '" fill="none" stroke-width="14" stroke-linecap="round"' +
+                    ringArc(0, frac, C) + '/>'
+                : '') +
             '</svg>' +
             '<div class="ringtext">' +
               '<div class="bignum">' + n0(Math.abs(left)) + '</div>' +
@@ -373,6 +393,7 @@ function renderHome() {
             '</div>' +
             '<div>Week' + (week.partial ? ' (' + week.days + ' days)' : '') + ': <b>' +
               n0(week.left) + '</b> left of ' + n0(week.budget) + '</div>' +
+            (deficit > 0 ? '<div class="dgoal">' + n0(deficit) + ' kcal deficit goal</div>' : '') +
           '</div>') +
       // Idle: grid on top, search below it (thumb reach). While searching the
       // search bar moves above the results so it stays put as they render.
