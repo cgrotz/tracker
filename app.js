@@ -105,11 +105,23 @@ function firstTracked() {
   S.entries.forEach(function (e) { if (!d || e.date < d) d = e.date; });
   return d;
 }
+// The day tracking began. The first week runs from here to that Sunday rather
+// than from the Monday before, so starting midweek does not hand out a full
+// week's budget for days that were never tracked.
+function startDay() {
+  var d = S.createdAt || todayISO();
+  S.weights.forEach(function (w) { if (w.date < d) d = w.date; });
+  var f = firstTracked();
+  if (f && f < d) d = f;
+  return d;
+}
 // Unspent (or overspent) calories from the earlier days of this week.
 function bankFor(date) {
-  var ws = weekStart(date), first = firstTracked(), bank = 0;
+  var begin = startDay(), f = firstTracked();
+  var floor = (f && f > begin) ? f : begin;
+  var ws = weekStart(date), bank = 0;
   for (var d = ws; d < date; d = addDays(d, 1)) {
-    if (first && d < first) continue;
+    if (d < floor) continue;
     var b = budgetOn(d);
     if (b == null) continue;
     bank += b - consumedOn(d);
@@ -118,13 +130,16 @@ function bankFor(date) {
   return Math.round(bank);
 }
 function weekStats(date) {
-  var ws = weekStart(date), budget = 0, consumed = 0, today = budgetOn(date) || 0;
-  for (var i = 0; i < 7; i++) {
-    var d = addDays(ws, i);
+  var ws = weekStart(date), end = addDays(ws, 6), begin = startDay();
+  if (begin > ws) ws = begin;          // partial first week
+  var budget = 0, consumed = 0, today = budgetOn(date) || 0, days = 0;
+  for (var d = ws; d <= end; d = addDays(d, 1)) {
     budget += (d <= date ? (budgetOn(d) || today) : today);
     consumed += consumedOn(d);
+    days++;
   }
-  return { start: ws, end: addDays(ws, 6), budget: Math.round(budget), consumed: consumed, left: Math.round(budget - consumed) };
+  return { start: ws, end: end, days: days, partial: days < 7,
+    budget: Math.round(budget), consumed: consumed, left: Math.round(budget - consumed) };
 }
 // Everything logged before, most-used first. Drives the tile grid, the local
 // half of search, and the chips in the manual sheet.
@@ -356,7 +371,8 @@ function renderHome() {
             '<div>' + n0(consumed) + ' of <b>' + n0(allowance) + '</b> today' +
               (bank ? ' <span class="' + (bank > 0 ? 'pos' : 'neg') + '">(' + signed(bank) + ' carried over)</span>' : '') +
             '</div>' +
-            '<div>Week: <b>' + n0(week.left) + '</b> left of ' + n0(week.budget) + '</div>' +
+            '<div>Week' + (week.partial ? ' (' + week.days + ' days)' : '') + ': <b>' +
+              n0(week.left) + '</b> left of ' + n0(week.budget) + '</div>' +
           '</div>') +
       // Idle: grid on top, search below it (thumb reach). While searching the
       // search bar moves above the results so it stays put as they render.
