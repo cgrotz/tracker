@@ -80,8 +80,16 @@ directly from the browser — no key, no proxy, CORS is open.
     burned four or five requests per word on a phone — slow typing made every search
     fail, which is exactly how this was found. It now needs Enter or a tap.
   - A client-side guard stops at 8 remote searches per rolling minute and says so.
-  - One quiet retry after 900 ms, then the error and a **Try again** button. No
-    automatic hammering of an endpoint that is already refusing.
+  - Every request retries up to **3 times with exponential backoff** (500, 1500,
+    4500 ms plus jitter), inside `offGet`, so barcode lookups get it too. Bounded
+    by three guardrails: a 15 s overall deadline, a ceiling of 20 actual requests
+    per rolling minute, and a rule that only retries what can plausibly recover —
+    network/CORS rejections, timeouts, 429 and 5xx. A 404 is an answer, not a
+    failure, and is never retried. After that, the error and a **Try again** button.
+  - Measured: four consecutive searches all succeeded, two of them on the second
+    attempt — the retry turned two visible failures into results. It is not a cure.
+    Push the endpoint hard enough and all four attempts still fail, which is why
+    the failure path and local-first search still matter.
   - Results are cached per session, so repeating a query is free.
   - Barcode lookup (`/api/v2/product`) is unaffected and stays fast and reliable.
   Settings → **Food lookup → Test Open Food Facts** runs these probes on any device

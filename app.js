@@ -311,11 +311,16 @@ function remoteSearch(date, q, attempt) {
   }
   if (attempt === 1 && !cached) offCalls.push(Date.now());
   box.innerHTML = head + '<p class="note">Searching…</p>';
+  var slow = setTimeout(function () {
+    var n = box.querySelector('.note');
+    if (n) n.textContent = 'Still trying — Open Food Facts is slow to answer…';
+  }, 2200);
   var stale = function () {
     var i = document.getElementById('q');
     return !box.isConnected || !i || foldCase(i.value.trim()) !== foldCase(q);
   };
   offSearch(q).then(function (list) {
+    clearTimeout(slow);
     if (stale()) return;
     if (!list.length) { box.innerHTML = head + '<p class="note">Nothing found for “' + esc(q) + '”.</p>'; return; }
     box.innerHTML = head + rowsHTML(list, 'p');
@@ -323,10 +328,9 @@ function remoteSearch(date, q, attempt) {
       b.onclick = function () { portionSheet(date, list[+b.getAttribute('data-p')]); };
     });
   }).catch(function (err) {
+    clearTimeout(slow);
     if (stale()) return;
-    // Rejections are instant and often transient; one quiet retry, then give up
-    // and let the user decide rather than hammering a throttled endpoint.
-    if (attempt < 2) { setTimeout(function () { remoteSearch(date, q, attempt + 1); }, 900); return; }
+    // offGet has already retried with backoff; do not stack another loop on top.
     box.innerHTML = head + '<p class="note">' + offError(err) + '</p>' +
       '<button class="btn ghost" type="button" id="retry">Try again</button>';
     box.querySelector('#retry').onclick = function () { remoteSearch(date, q, 1); };
@@ -962,9 +966,33 @@ function offNorm(p) {
     qty: String(p.quantity || '').trim()
   };
 }
-function offGet(url) {
+var OFF_RETRIES = 3;            // attempts after the first
+var OFF_BACKOFF = 500;          // ms, tripled each round: 500, 1500, 4500
+var OFF_DEADLINE = 15000;       // give up entirely after this, however many are left
+var OFF_CEILING = 20;           // hard cap on actual requests per rolling minute
+var offRequests = [];           // timestamp of every attempt, retries included
+
+function offRecent() {
+  var now = Date.now();
+  offRequests = offRequests.filter(function (t) { return now - t < 60000; });
+  return offRequests.length;
+}
+// Only retry what can plausibly succeed next time. A 404 is an answer; retrying
+// it three times just burns the request budget that a real failure would need.
+function offRetryable(err) {
+  var m = (err && err.message) || '';
+  if (m.indexOf('HTTP ') === 0) {
+    var code = parseInt(m.slice(5), 10);
+    return code === 429 || code >= 500;
+  }
+  return true;                  // network / CORS rejection / timeout
+}
+function offGet(url, attempt, deadline) {
+  attempt = attempt || 0;
+  deadline = deadline || (Date.now() + OFF_DEADLINE);
+  offRequests.push(Date.now());
   var ctl = window.AbortController ? new AbortController() : null;
-  var timer = ctl ? setTimeout(function () { ctl.abort(); }, 8000) : 0;
+  var timer = ctl ? setTimeout(function () { ctl.abort(); }, 6000) : 0;
   return fetch(url, ctl ? { signal: ctl.signal } : undefined).then(function (r) {
     clearTimeout(timer);
     if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -973,8 +1001,14 @@ function offGet(url) {
     clearTimeout(timer);
     // Safari says "Load failed", Chrome "Failed to fetch"; both mean the request
     // never completed — usually a missing CORS header on the response.
-    throw new Error(e && e.name === 'AbortError' ? 'timed out after 8s'
+    throw new Error(e && e.name === 'AbortError' ? 'timed out'
       : (e && e.message) || 'network error');
+  }).catch(function (err) {
+    var wait = OFF_BACKOFF * Math.pow(3, attempt) + Math.round(Math.random() * 250);
+    if (attempt >= OFF_RETRIES || !offRetryable(err) ||
+        offRecent() >= OFF_CEILING || Date.now() + wait > deadline) throw err;
+    return new Promise(function (res) { setTimeout(res, wait); })
+      .then(function () { return offGet(url, attempt + 1, deadline); });
   });
 }
 function offSearch(q) {
