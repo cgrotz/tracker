@@ -1,5 +1,5 @@
 /* Cache-first app shell. Bump CACHE on every release so clients update. */
-const CACHE = 'budget-v1';
+const CACHE = 'budget-v4';
 const SHELL = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest', './icons/icon.svg'];
 
 self.addEventListener('install', e => {

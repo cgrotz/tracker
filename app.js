@@ -51,7 +51,7 @@ function fmtShort(s) { return parseISO(s).toLocaleDateString(undefined, { day: '
 
 /* ---------- state ---------- */
 function blank() {
-  return { v: 1, createdAt: todayISO(), profile: null, weights: [], entries: [], pins: [], settings: { capRollover: true } };
+  return { v: 1, createdAt: todayISO(), profile: null, weights: [], entries: [], pins: [], foods: {}, settings: { capRollover: true } };
 }
 var S = (function load() {
   try {
@@ -126,24 +126,26 @@ function weekStats(date) {
   }
   return { start: ws, end: addDays(ws, 6), budget: Math.round(budget), consumed: consumed, left: Math.round(budget - consumed) };
 }
-// Most-used recent foods, pinned ones first.
-function quickAdds(limit) {
-  var seen = {}, out = [];
-  S.pins.forEach(function (p) { var k = p.label + '|' + p.kcal; if (!seen[k]) { seen[k] = 1; out.push({ label: p.label, kcal: p.kcal, pinned: true }); } });
+// Everything logged before, most-used first. Drives the tile grid, the local
+// half of search, and the chips in the manual sheet.
+function foodHistory() {
   var tally = {};
-  S.entries.slice(-400).forEach(function (e) {
+  S.entries.slice(-500).forEach(function (e) {
     if (!e.label) return;
     var k = e.label + '|' + e.kcal;
-    if (seen[k]) return;
-    if (!tally[k]) tally[k] = { label: e.label, kcal: e.kcal, n: 0, last: '' };
+    if (!tally[k]) tally[k] = { label: e.label, kcal: e.kcal, grams: e.grams, per100: e.per100, code: e.code, n: 0, last: '' };
     tally[k].n++;
     if (e.date > tally[k].last) tally[k].last = e.date;
   });
-  Object.keys(tally).map(function (k) { return tally[k]; })
-    .sort(function (a, b) { return b.n - a.n || (a.last < b.last ? 1 : -1); })
-    .forEach(function (t) { if (out.length < limit) out.push(t); });
-  return out.slice(0, limit);
+  return Object.keys(tally).map(function (k) { return tally[k]; })
+    .sort(function (a, b) { return b.n - a.n || (a.last < b.last ? 1 : -1); });
 }
+function foldCase(s) { return String(s).toLowerCase(); }
+function historyMatches(q, limit) {
+  var n = foldCase(q);
+  return foodHistory().filter(function (f) { return foldCase(f.label).indexOf(n) >= 0; }).slice(0, limit);
+}
+function quickAdds(limit) { return foodHistory().slice(0, limit); }
 
 /* ---------- tiny DOM helpers ---------- */
 var app = document.getElementById('app');
@@ -153,20 +155,41 @@ function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return ({ 
 function n0(x) { return Math.round(x).toLocaleString(); }
 function signed(x) { return (x > 0 ? '+' : '') + n0(x); }
 var toastTimer;
-function toast(msg) {
+function toast(msg, undo) {
   var t = document.getElementById('toast');
-  t.textContent = msg; t.classList.add('show');
-  clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.classList.remove('show'); }, 2200);
+  t.textContent = msg;
+  t.classList.toggle('actionable', !!undo);
+  if (undo) {
+    var b = document.createElement('button');
+    b.className = 'undo'; b.type = 'button'; b.textContent = 'Undo';
+    b.onclick = function () { t.classList.remove('show'); clearTimeout(toastTimer); undo(); };
+    t.appendChild(b);
+  }
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.classList.remove('show'); }, undo ? 5000 : 2200);
 }
+// Sheets that hold a resource (the camera) register a teardown here.
+var sheetCleanup = null;
+function runCleanup() {
+  if (!sheetCleanup) return;
+  var f = sheetCleanup; sheetCleanup = null;
+  try { f(); } catch (e) {}
+}
+var sheetTimer;
 function openSheet(html, onMount) {
+  runCleanup();
+  clearTimeout(sheetTimer);   // a pending hide from a just-closed sheet must not fire
   sheetBody.innerHTML = html;
   overlay.hidden = false;
   requestAnimationFrame(function () { document.body.classList.add('open'); });
   if (onMount) onMount(sheetBody);
 }
 function closeSheet() {
+  runCleanup();
   document.body.classList.remove('open');
-  setTimeout(function () { overlay.hidden = true; sheetBody.innerHTML = ''; }, 260);
+  clearTimeout(sheetTimer);
+  sheetTimer = setTimeout(function () { overlay.hidden = true; sheetBody.innerHTML = ''; }, 260);
 }
 overlay.addEventListener('click', function (e) { if (e.target.hasAttribute('data-close')) closeSheet(); });
 document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !overlay.hidden) closeSheet(); });
@@ -174,10 +197,105 @@ document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !o
 var ICON = {
   history: '<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg>',
   gear: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H1a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 2.6 7a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H7a1.7 1.7 0 0 0 1-1.5V1a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V7a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" transform="translate(1.5 1.5) scale(.86)"/></svg>',
-  back: '<svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>'
+  back: '<svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>',
+  search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>',
+  scan: '<svg viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8v8M10 8v8M13.5 8v8M17 8v8"/></svg>'
 };
 
 /* =========================== home =========================== */
+// One tap logs a repeat food, so every quick log is undoable from the toast.
+function logFood(date, item) {
+  var e = { id: uid(), date: date, label: item.label, kcal: item.kcal, ts: Date.now() };
+  if (item.grams) { e.grams = item.grams; e.per100 = item.per100; e.code = item.code; }
+  S.entries.push(e);
+  save(); render();
+  toast(item.label + ' · ' + n0(item.kcal) + ' kcal', function () {
+    S.entries = S.entries.filter(function (x) { return x.id !== e.id; });
+    save(); render();
+  });
+}
+
+function tileHTML(list) {
+  return '<div class="grid3' + (list.length ? '' : ' empty') + '">' +
+    list.map(function (t, i) {
+      return '<button class="tile" data-t="' + i + '">' +
+        '<span class="tl">' + esc(t.label) + '</span>' +
+        '<span class="tk">' + n0(t.kcal) + '</span></button>';
+    }).join('') +
+    '<button class="tile manual" id="tile-manual">' +
+      '<span class="tl">Calories</span><span class="tk">by hand</span></button>' +
+    '</div>' +
+    (list.length ? '' : '<p class="note center">Search or scan below to log your first food. It will show up here afterwards.</p>');
+}
+
+function rowsHTML(list, attr) {
+  return '<div class="rows">' + list.map(function (p, i) {
+    return '<button class="row" data-' + attr + '="' + i + '">' +
+      '<span class="lbl"><b>' + esc(p.name || p.label) + '</b>' +
+      (p.brand ? '<em>' + esc(p.brand) + '</em>' : '') + '</span>' +
+      '<span class="kcal">' + (p.per100 != null && p.name ? p.per100 + ' / 100 g' : n0(p.kcal) + ' kcal') +
+      '</span></button>';
+  }).join('') + '</div>';
+}
+
+var searchTimer;
+function showPanel(date, q) {
+  var panel = document.getElementById('panel');
+  if (!panel) return;
+  clearTimeout(searchTimer);
+  q = (q || '').trim();
+  var finder = document.getElementById('finder');
+  if (finder) finder.classList.toggle('searching', !!q);
+
+  if (!q) {
+    var tiles = foodHistory().slice(0, 8);
+    panel.innerHTML = tileHTML(tiles);
+    panel.querySelector('#tile-manual').onclick = function () { foodSheet(date, null, true); };
+    Array.prototype.forEach.call(panel.querySelectorAll('[data-t]'), function (b) {
+      b.onclick = function () { logFood(date, tiles[+b.getAttribute('data-t')]); };
+    });
+    return;
+  }
+
+  var mine = historyMatches(q, 6);
+  panel.innerHTML =
+    (mine.length ? '<div class="seclabel">Your foods</div>' + rowsHTML(mine, 'm') : '') +
+    '<div id="remote"></div>';
+  Array.prototype.forEach.call(panel.querySelectorAll('[data-m]'), function (b) {
+    b.onclick = function () { logFood(date, mine[+b.getAttribute('data-m')]); };
+  });
+
+  // Open Food Facts search is flaky and rate sensitive — never per keystroke.
+  if (q.length >= 3) searchTimer = setTimeout(function () { remoteSearch(date, q); }, 700);
+  else document.getElementById('remote').innerHTML =
+    '<p class="note">Keep typing to search Open Food Facts.</p>';
+}
+
+function remoteSearch(date, q) {
+  var box = document.getElementById('remote');
+  if (!box) return;
+  var head = '<div class="seclabel">Open Food Facts</div>';
+  box.innerHTML = head + '<p class="note">Searching…</p>';
+  var stale = function () {
+    var i = document.getElementById('q');
+    return !box.isConnected || !i || i.value.trim() !== q;
+  };
+  offSearch(q).then(function (list) {
+    if (stale()) return;
+    if (!list.length) { box.innerHTML = head + '<p class="note">Nothing found for “' + esc(q) + '”.</p>'; return; }
+    box.innerHTML = head + rowsHTML(list, 'p');
+    Array.prototype.forEach.call(box.querySelectorAll('[data-p]'), function (b) {
+      b.onclick = function () { portionSheet(date, list[+b.getAttribute('data-p')]); };
+    });
+  }).catch(function () {
+    if (stale()) return;
+    // The endpoint fails often enough that a retry is worth a button.
+    box.innerHTML = head + '<p class="note">' + offError() + '</p>' +
+      '<button class="btn ghost" type="button" id="retry">Try again</button>';
+    box.querySelector('#retry').onclick = function () { remoteSearch(date, q); };
+  });
+}
+
 function renderHome() {
   var today = todayISO();
   var budget = budgetOn(today);
@@ -200,7 +318,7 @@ function renderHome() {
     '</div>' +
     '<div class="home state-' + state + '">' +
       (budget == null
-        ? '<div class="card center mt" style="width:100%"><h2>Almost there</h2><p class="note">Log your weight to get your first budget.</p></div>'
+        ? '<div class="card center" style="width:100%"><h2>Almost there</h2><p class="note">Log your weight to get your first budget.</p></div>'
         : '<div class="ringwrap">' +
             '<svg viewBox="0 0 260 260" aria-hidden="true">' +
               '<circle class="ring-track" cx="130" cy="130" r="' + R + '" fill="none" stroke-width="14"/>' +
@@ -218,12 +336,18 @@ function renderHome() {
             '</div>' +
             '<div>Week: <b>' + n0(week.left) + '</b> left of ' + n0(week.budget) + '</div>' +
           '</div>') +
-      '<div class="actions">' +
-        '<button class="btn" id="add-food">Add food</button>' +
-        (hasWeightToday ? '' : '<button class="btn secondary" id="add-weight">Log today’s weight</button>') +
+      // Idle: grid on top, search below it (thumb reach). While searching the
+      // search bar moves above the results so it stays put as they render.
+      '<div class="finder" id="finder">' +
+        '<div id="panel" class="panel"></div>' +
+        '<form class="searchbar" id="sb" autocomplete="off">' +
+          '<input id="q" type="search" enterkeyhint="search" placeholder="Search food" aria-label="Search food">' +
+          (CAM.possible() ? '<button type="button" class="iconbtn scanbtn" id="scanbtn" aria-label="Scan barcode">' + ICON.scan + '</button>' : '') +
+        '</form>' +
       '</div>' +
+      (hasWeightToday ? '' : '<button class="btn secondary mt" id="add-weight">Log today’s weight</button>') +
       (list.length
-        ? '<details class="today" open><summary><span>Today</span><span>' + list.length + ' item' + (list.length > 1 ? 's' : '') + '</span></summary>' +
+        ? '<details class="today"><summary><span>Today</span><span>' + list.length + ' item' + (list.length > 1 ? 's' : '') + '</span></summary>' +
             '<div class="rows">' + list.map(function (e) {
               return '<button class="row" data-edit="' + e.id + '"><span class="lbl">' + esc(e.label || 'Food') + '</span><span class="kcal">' + n0(e.kcal) + ' kcal</span></button>';
             }).join('') + '</div></details>'
@@ -232,20 +356,36 @@ function renderHome() {
 
   app.querySelector('#go-history').onclick = function () { location.hash = '#/history'; };
   app.querySelector('#go-settings').onclick = function () { location.hash = '#/settings'; };
-  app.querySelector('#add-food').onclick = function () { foodSheet(today); };
   var wb = app.querySelector('#add-weight');
   if (wb) wb.onclick = function () { weightSheet(today); };
   Array.prototype.forEach.call(app.querySelectorAll('[data-edit]'), function (b) {
     b.onclick = function () { foodSheet(today, b.getAttribute('data-edit')); };
   });
+
+  var form = app.querySelector('#sb'), input = app.querySelector('#q');
+  input.oninput = function () { showPanel(today, input.value); };
+  form.onsubmit = function (e) {
+    e.preventDefault();
+    var q = input.value.trim();
+    clearTimeout(searchTimer);
+    if (q.length >= 2) { showPanel(today, q); remoteSearch(today, q); }
+    input.blur();
+  };
+  var sb = app.querySelector('#scanbtn');
+  if (sb) sb.onclick = function () { scanSheet(today); };
+  showPanel(today, '');
 }
 
 /* =========================== food sheet =========================== */
-function foodSheet(date, editId) {
+function foodSheet(date, editId, manualOnly) {
   var editing = editId ? S.entries.filter(function (e) { return e.id === editId; })[0] : null;
   var quick = editing ? [] : quickAdds(8);
   openSheet(
     '<h2>' + (editing ? 'Edit entry' : 'Add food') + (date !== todayISO() ? ' — ' + fmtDay(date) : '') + '</h2>' +
+    (editing || manualOnly ? '' : '<div class="lookup">' +
+      '<button class="chip" id="off-search">' + ICON.search + ' Search food</button>' +
+      (CAM.possible() ? '<button class="chip" id="off-scan">' + ICON.scan + ' Scan barcode</button>' : '') +
+    '</div>') +
     (quick.length ? '<div class="chips">' + quick.map(function (q, i) {
       return '<button class="chip" data-q="' + i + '">' + esc(q.label) + ' <b>' + n0(q.kcal) + '</b></button>';
     }).join('') + '</div>' : '') +
@@ -275,6 +415,10 @@ function foodSheet(date, editId) {
         else S.entries.push({ id: uid(), date: date, label: label, kcal: v, ts: Date.now() });
         save(); closeSheet(); render();
       };
+      var srch = root.querySelector('#off-search');
+      if (srch) srch.onclick = function () { searchSheet(date); };
+      var scan = root.querySelector('#off-scan');
+      if (scan) scan.onclick = function () { scanSheet(date); };
       var del = root.querySelector('#del');
       if (del) del.onclick = function () {
         S.entries = S.entries.filter(function (e) { return e.id !== editId; });
@@ -580,6 +724,258 @@ function backfillSheet() {
             });
         };
       });
+    }
+  );
+}
+
+/* =========================== Open Food Facts ===========================
+   Public API, no key, CORS open. Text search is rate limited to a handful of
+   requests a minute per IP, so it runs on submit only — never per keystroke.
+   Product lookups are far more generous and are cached in S.foods so a repeat
+   scan of the same item works offline. Data is ODbL; see the README.
+------------------------------------------------------------------------- */
+var OFF_BASE = 'https://de.openfoodfacts.org';
+// Browsers forbid setting User-Agent, so the app identifies itself in the query.
+var OFF_ID = 'app_name=budget-tracker&app_version=1.0';
+var OFF_FIELDS = 'code,product_name,product_name_de,brands,quantity,serving_size,nutriments';
+var offResults = {};  // query -> products, for this session only
+
+function parseServing(s) {
+  if (!s) return null;
+  var m = String(s).match(/(\d+(?:[.,]\d+)?)\s*(g|ml)\b/i);
+  if (!m) return null;
+  var v = Math.round(parseFloat(m[1].replace(',', '.')));
+  return v > 0 && v < 2000 ? v : null;
+}
+function offNorm(p) {
+  var n = p.nutriments || {};
+  var per100 = n['energy-kcal_100g'];
+  return {
+    code: String(p.code || ''),
+    name: String(p.product_name_de || p.product_name || '').trim().slice(0, 60),
+    brand: String(p.brands || '').split(',')[0].trim().slice(0, 28),
+    per100: per100 == null ? null : Math.round(per100),
+    servingG: parseServing(p.serving_size),
+    qty: String(p.quantity || '').trim()
+  };
+}
+function offGet(url) {
+  return fetch(url).then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  });
+}
+function offSearch(q) {
+  if (offResults[q]) return Promise.resolve(offResults[q]);
+  var url = OFF_BASE + '/cgi/search.pl?search_simple=1&action=process&json=1&page_size=12' +
+    '&fields=' + OFF_FIELDS + '&' + OFF_ID + '&search_terms=' + encodeURIComponent(q);
+  return offGet(url).then(function (j) {
+    var out = (j.products || []).map(offNorm).filter(function (p) { return p.name && p.per100 != null; });
+    offResults[q] = out;
+    return out;
+  });
+}
+function offProduct(code) {
+  if (S.foods[code]) return Promise.resolve(S.foods[code]);
+  var url = OFF_BASE + '/api/v2/product/' + encodeURIComponent(code) + '.json?fields=' + OFF_FIELDS + '&' + OFF_ID;
+  return offGet(url).then(function (j) {
+    if (!j.product) return null;
+    var p = offNorm(j.product);
+    if (!p.name || p.per100 == null) return null;
+    S.foods[code] = p;
+    save();
+    return p;
+  });
+}
+function offError() {
+  return navigator.onLine === false
+    ? 'You are offline. Your own foods still work — or add it by hand.'
+    : 'Open Food Facts did not answer. Your own foods still work — or add it by hand.';
+}
+
+/* =========================== search sheet =========================== */
+function searchSheet(date, prefill) {
+  openSheet(
+    '<h2>Search food</h2>' +
+    '<form id="s"><div class="searchrow">' +
+      '<input name="q" type="search" enterkeyhint="search" autocomplete="off" placeholder="e.g. Vollkornbrot" value="' + (prefill ? esc(prefill) : '') + '">' +
+      '<button class="btn" type="submit">Go</button>' +
+    '</div></form>' +
+    '<div id="res"><p class="note">Searches the German Open Food Facts database. Pick a product, then set your portion.</p></div>' +
+    '<button class="btn ghost mt" id="manual">Enter calories by hand</button>',
+    function (root) {
+      var form = root.querySelector('#s'), res = root.querySelector('#res');
+      setTimeout(function () { form.q.focus(); }, 320);
+      root.querySelector('#manual').onclick = function () { foodSheet(date); };
+      form.onsubmit = function (e) {
+        e.preventDefault();
+        var q = form.q.value.trim();
+        if (q.length < 2) { toast('Type at least two characters'); return; }
+        res.innerHTML = '<p class="note">Searching…</p>';
+        offSearch(q).then(function (list) {
+          if (!list.length) {
+            res.innerHTML = '<p class="note">Nothing found for “' + esc(q) + '”. Try a shorter or more common term.</p>';
+            return;
+          }
+          res.innerHTML = '<div class="rows">' + list.map(function (p, i) {
+            return '<button class="row" data-p="' + i + '">' +
+              '<span class="lbl"><b>' + esc(p.name) + '</b>' +
+              (p.brand ? '<em>' + esc(p.brand) + '</em>' : '') + '</span>' +
+              '<span class="kcal">' + p.per100 + ' / 100 g</span></button>';
+          }).join('') + '</div>';
+          Array.prototype.forEach.call(res.querySelectorAll('[data-p]'), function (b) {
+            b.onclick = function () { portionSheet(date, list[+b.getAttribute('data-p')]); };
+          });
+        }).catch(function () {
+          res.innerHTML = '<p class="note">' + offError() + '</p>';
+        });
+      };
+    }
+  );
+}
+
+/* =========================== portion sheet =========================== */
+function portionSheet(date, p) {
+  var presets = [];
+  if (p.servingG) presets.push({ g: p.servingG, label: '1 serving' });
+  [30, 50, 100, 200].forEach(function (g) {
+    if (!presets.some(function (x) { return x.g === g; })) presets.push({ g: g, label: g + ' g' });
+  });
+  var start = p.servingG || 100;
+  openSheet(
+    '<h2>' + esc(p.name) + '</h2>' +
+    '<p class="note" style="margin-top:-8px">' + (p.brand ? esc(p.brand) + ' · ' : '') + p.per100 + ' kcal / 100 g' +
+      (p.qty ? ' · ' + esc(p.qty) : '') + '</p>' +
+    '<div class="chips">' + presets.map(function (x, i) {
+      return '<button class="chip" data-g="' + x.g + '">' + esc(x.label) + (x.label === '1 serving' ? ' <b>' + x.g + ' g</b>' : '') + '</button>';
+    }).join('') + '</div>' +
+    '<form id="pf">' +
+      '<label class="f"><span>Amount (g)</span><input name="g" type="number" inputmode="decimal" min="1" max="5000" step="1" required value="' + start + '"></label>' +
+      '<div class="calcout"><span id="out">' + Math.round(p.per100 * start / 100) + '</span> kcal</div>' +
+      '<button class="btn mt" type="submit">Add</button>' +
+    '</form>' +
+    '<button class="btn ghost mt" id="back2">Back to search</button>',
+    function (root) {
+      var form = root.querySelector('#pf'), out = root.querySelector('#out');
+      var recalc = function () {
+        var g = +form.g.value;
+        out.textContent = g > 0 ? n0(p.per100 * g / 100) : '0';
+      };
+      form.g.oninput = recalc;
+      Array.prototype.forEach.call(root.querySelectorAll('[data-g]'), function (b) {
+        b.onclick = function () { form.g.value = b.getAttribute('data-g'); recalc(); };
+      });
+      root.querySelector('#back2').onclick = function () { searchSheet(date); };
+      form.onsubmit = function (e) {
+        e.preventDefault();
+        var g = +form.g.value;
+        if (!(g > 0)) { toast('Enter an amount'); return; }
+        var kcal = Math.round(p.per100 * g / 100);
+        S.entries.push({
+          id: uid(), date: date, label: p.name + ' · ' + Math.round(g) + ' g',
+          kcal: kcal, grams: Math.round(g), per100: p.per100, code: p.code, ts: Date.now()
+        });
+        save(); closeSheet(); render(); toast(p.name + ' · ' + n0(kcal) + ' kcal');
+      };
+    }
+  );
+}
+
+/* =========================== barcode scanner ===========================
+   Native BarcodeDetector where it exists (Chrome, Android); ZXing lazily
+   pulled from a CDN only when the button is tapped, so the offline core stays
+   dependency free. Both paths share one camera stream.
+------------------------------------------------------------------------- */
+var ZXING_URL = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
+var CAM = {
+  possible: function () {
+    return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) &&
+      (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+  }
+};
+function loadScript(src) {
+  return new Promise(function (res, rej) {
+    var s = document.createElement('script');
+    s.src = src;
+    s.onload = res;
+    s.onerror = function () { rej(new Error('script')); };
+    document.head.appendChild(s);
+  });
+}
+function scanSheet(date) {
+  openSheet(
+    '<h2>Scan barcode</h2>' +
+    '<div class="scanbox"><video id="vid" playsinline muted autoplay></video><div class="scanline"></div></div>' +
+    '<p class="note" id="stat">Starting the camera…</p>' +
+    '<button class="btn secondary mt" id="tosearch">Search by name instead</button>',
+    function (root) {
+      var video = root.querySelector('#vid'), stat = root.querySelector('#stat');
+      var stream = null, reader = null, raf = 0, done = false;
+
+      function stop() {
+        done = true;
+        if (raf) cancelAnimationFrame(raf);
+        if (reader) { try { reader.reset(); } catch (e) {} reader = null; }
+        if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+      }
+      sheetCleanup = stop;
+      root.querySelector('#tosearch').onclick = function () { searchSheet(date); };
+
+      function found(code) {
+        if (done) return;
+        stop();
+        stat.textContent = 'Looking up ' + code + '…';
+        offProduct(code).then(function (p) {
+          if (p) portionSheet(date, p);
+          else {
+            stat.innerHTML = 'Barcode <b>' + esc(code) + '</b> is not in Open Food Facts (or has no calories listed). ' +
+              'Add it by hand, or search by name.';
+          }
+        }).catch(function () { stat.textContent = offError(); });
+      }
+
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } })
+        .then(function (s) {
+          if (done) { s.getTracks().forEach(function (t) { t.stop(); }); return; }
+          stream = s;
+          video.srcObject = s;
+          return video.play().catch(function () {});
+        })
+        .then(function () {
+          if (done || !stream) return;
+          if (window.BarcodeDetector) return nativeScan();
+          stat.textContent = 'Loading the scanner…';
+          return loadScript(ZXING_URL).then(zxingScan);
+        })
+        .catch(function (e) {
+          stat.textContent = (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError'))
+            ? 'Camera access was denied. Search by name instead.'
+            : 'No camera available here. Search by name instead.';
+        });
+
+      function nativeScan() {
+        return BarcodeDetector.getSupportedFormats().then(function (all) {
+          var want = ['ean_13', 'ean_8', 'upc_a', 'upc_e'].filter(function (f) { return all.indexOf(f) >= 0; });
+          var det = new BarcodeDetector(want.length ? { formats: want } : undefined);
+          stat.textContent = 'Point the camera at the barcode.';
+          var tick = function () {
+            if (done) return;
+            det.detect(video).then(function (codes) {
+              if (codes && codes.length && codes[0].rawValue) found(codes[0].rawValue);
+              else raf = requestAnimationFrame(tick);
+            }).catch(function () { raf = requestAnimationFrame(tick); });
+          };
+          raf = requestAnimationFrame(tick);
+        });
+      }
+      function zxingScan() {
+        if (done || !window.ZXing) return;
+        reader = new ZXing.BrowserMultiFormatReader();
+        stat.textContent = 'Point the camera at the barcode.';
+        reader.decodeFromStream(stream, video, function (result) {
+          if (result && result.getText) found(result.getText());
+        });
+      }
     }
   );
 }

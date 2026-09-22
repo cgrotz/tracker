@@ -39,13 +39,13 @@ a{color:inherit}
 
 /* home */
 .home{display:flex;flex-direction:column;align-items:center;text-align:center}
-.ringwrap{position:relative;width:260px;height:260px;margin:12px 0 4px}
+.ringwrap{position:relative;width:204px;height:204px;margin:6px 0 2px}
 .ringwrap svg{width:100%;height:100%;transform:rotate(-90deg)}
 .ring-track{stroke:var(--track)}
 .ring-val{transition:stroke-dashoffset .5s cubic-bezier(.2,.8,.2,1),stroke .3s}
 .ringtext{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
-.bignum{font-size:60px;font-weight:700;letter-spacing:-.04em;line-height:1;font-variant-numeric:tabular-nums}
-.bigunit{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.bignum{font-size:46px;font-weight:700;letter-spacing:-.04em;line-height:1;font-variant-numeric:tabular-nums}
+.bigunit{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:600}
 .state-green .bignum{color:var(--green)} .state-green .ring-val{stroke:var(--green)}
 .state-yellow .bignum{color:var(--yellow)} .state-yellow .ring-val{stroke:var(--yellow)}
 .state-red .bignum{color:var(--red)} .state-red .ring-val{stroke:var(--red)}
@@ -145,3 +145,67 @@ input:focus,select:focus{outline:2px solid var(--fg);outline-offset:-1px}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .center{text-align:center}
 .mt{margin-top:22px}
+
+/* lookup: search + scan */
+.lookup{display:flex;gap:8px;margin-bottom:16px}
+.lookup .chip{flex:1;justify-content:center;padding:12px 10px;font-weight:550}
+.chip svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.searchrow{display:flex;gap:8px;margin-bottom:16px}
+.searchrow input{flex:1}
+.searchrow .btn{width:auto;padding:13px 20px}
+.row .lbl{display:flex;flex-direction:column;gap:1px;min-width:0}
+.row .lbl b{font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .lbl em{font-style:normal;font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.calcout{
+  text-align:center;font-size:34px;font-weight:700;letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums;padding:6px 0 2px
+}
+.calcout span{font-size:44px}
+.scanbox{
+  position:relative;width:100%;aspect-ratio:4/3;background:#000;border-radius:14px;
+  overflow:hidden;margin-bottom:14px
+}
+.scanbox video{width:100%;height:100%;object-fit:cover;display:block}
+.scanline{
+  position:absolute;left:10%;right:10%;top:50%;height:2px;background:var(--red);
+  opacity:.85;box-shadow:0 0 12px var(--red)
+}
+
+/* quick-add grid + inline search */
+.panel{width:100%;margin-top:18px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.tile{
+  min-height:84px;padding:10px 8px;border:1px solid var(--line);border-radius:14px;
+  background:var(--panel);cursor:pointer;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:5px;text-align:center;overflow:hidden
+}
+.tile:active{background:var(--track)}
+.tile .tl{
+  font-size:13px;font-weight:550;line-height:1.25;overflow:hidden;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical
+}
+.tile .tk{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.tile.manual{border-style:dashed}
+.tile.manual .tl{color:var(--muted)}
+.searchbar{display:flex;gap:8px;width:100%;margin-top:12px}
+.searchbar input{flex:1}
+.scanbtn{
+  width:48px;height:48px;flex:none;border:1px solid var(--line);border-radius:12px;
+  background:var(--panel);color:var(--muted)
+}
+.scanbtn:hover{color:var(--fg)}
+.seclabel{
+  font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);
+  font-weight:600;margin:4px 2px 6px;text-align:left
+}
+.panel .rows{margin-top:0;margin-bottom:12px}
+.panel .note{text-align:left}
+.toast.actionable{pointer-events:auto}
+.toast .undo{
+  background:none;border:0;color:inherit;font-weight:700;margin-left:14px;padding:0;
+  cursor:pointer;text-decoration:underline
+}
+.finder{display:flex;flex-direction:column;width:100%}
+.finder.searching .searchbar{order:-1;margin-top:18px;margin-bottom:10px}
+.finder.searching .panel{margin-top:0}
+.grid3.empty .tile.manual{grid-column:1/-1;min-height:64px}
