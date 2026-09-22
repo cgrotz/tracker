@@ -98,11 +98,30 @@ instead. Worth re-checking against their current API policy.
 Open Food Facts data is licensed under the
 [Open Database License](https://opendatacommons.org/licenses/odbl/) (ODbL).
 
+## Updating an installed app
+
+The service worker is stale-while-revalidate, so a launch serves the cached build and
+downloads the new one in the background. To avoid needing a second launch, the app
+listens for a newly installed worker and shows an **Update ready — Reload** toast; it
+also re-checks when the app returns to the foreground (at most every 15 min), since
+iOS suspends a home-screen app rather than reloading it.
+
+**Bump `CACHE` in `sw.js` on every deploy.** That byte change is what makes the
+browser notice a new worker. Forget it and clients can launch forever without
+updating. Never tell anyone to clear website data to force an update — on iOS that
+also deletes every weight and entry.
+
 ## Data
 
 Stored under the `caltrack.v1` key in `localStorage` — per browser, per device, never
-uploaded. Clearing site data erases it. There is no export yet; that is the obvious
-next addition.
+uploaded. Clearing site data erases it, and on iOS a home-screen web app may keep its
+own storage separate from Safari's, so data entered in one may not appear in the other.
+
+Settings → **Data** has **Back up** and **Restore from backup**. Back up offers three
+routes, because iOS download behaviour is inconsistent: the native share sheet
+(`navigator.share` with a file), a plain file download, and the raw JSON as selectable
+text with a copy button. Restore accepts a file or pasted text, validates the shape,
+drops malformed rows, shows you the counts and asks before replacing anything.
 
 ## Files
 

@@ -209,3 +209,5 @@ input:focus,select:focus{outline:2px solid var(--fg);outline-offset:-1px}
 .finder.searching .searchbar{order:-1;margin-top:18px;margin-bottom:10px}
 .finder.searching .panel{margin-top:0}
 .grid3.empty .tile.manual{grid-column:1/-1;min-height:64px}
+textarea{width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--fg);font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}
+input[type=file]{padding:10px;font-size:14px}

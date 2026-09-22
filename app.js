@@ -155,19 +155,19 @@ function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return ({ 
 function n0(x) { return Math.round(x).toLocaleString(); }
 function signed(x) { return (x > 0 ? '+' : '') + n0(x); }
 var toastTimer;
-function toast(msg, undo) {
+function toast(msg, action, label, ms) {
   var t = document.getElementById('toast');
   t.textContent = msg;
-  t.classList.toggle('actionable', !!undo);
-  if (undo) {
+  t.classList.toggle('actionable', !!action);
+  if (action) {
     var b = document.createElement('button');
-    b.className = 'undo'; b.type = 'button'; b.textContent = 'Undo';
-    b.onclick = function () { t.classList.remove('show'); clearTimeout(toastTimer); undo(); };
+    b.className = 'undo'; b.type = 'button'; b.textContent = label || 'Undo';
+    b.onclick = function () { t.classList.remove('show'); clearTimeout(toastTimer); action(); };
     t.appendChild(b);
   }
   t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(function () { t.classList.remove('show'); }, undo ? 5000 : 2200);
+  toastTimer = setTimeout(function () { t.classList.remove('show'); }, ms || (action ? 5000 : 2200));
 }
 // Sheets that hold a resource (the camera) register a teardown here.
 var sheetCleanup = null;
@@ -704,6 +704,8 @@ function renderSettings() {
     '</div>' +
     '<div class="card"><h2>Data</h2>' +
       '<p class="note" style="margin-top:0">' + S.entries.length + ' entries · ' + S.weights.length + ' weight readings, stored only in this browser.</p>' +
+      '<button class="btn secondary" id="export">Back up</button>' +
+      '<button class="btn ghost mt" id="import">Restore from backup</button>' +
       '<button class="btn danger mt" id="erase">Erase everything</button>' +
     '</div>';
 
@@ -716,6 +718,8 @@ function renderSettings() {
   app.querySelector('#cap').onchange = function (e) { S.settings.capRollover = e.target.checked; save(); };
   app.querySelector('#wt').onclick = function () { weightSheet(today); };
   app.querySelector('#wy').onclick = function () { backfillSheet(); };
+  app.querySelector('#export').onclick = function () { exportSheet(); };
+  app.querySelector('#import').onclick = function () { importSheet(); };
   app.querySelector('#diag').onclick = function () {
     var box = app.querySelector('#diagout');
     box.innerHTML = '<p class="note">Testing…</p>';
@@ -754,6 +758,110 @@ function renderSettings() {
     location.hash = '#/';
     render();
   };
+}
+
+/* =========================== backup =========================== */
+// Everything lives in localStorage, which iOS can reclaim and a cleared site
+// wipes outright. This is the only way back.
+function backupJSON() { return JSON.stringify(S, null, 2); }
+function backupName() { return 'budget-backup-' + todayISO() + '.json'; }
+
+function exportSheet() {
+  var json = backupJSON(), name = backupName();
+  openSheet(
+    '<h2>Back up</h2>' +
+    '<p class="note" style="margin-top:-8px">' + S.entries.length + ' entries · ' + S.weights.length +
+      ' weight readings. Save the file somewhere you will still have it if this phone is wiped.</p>' +
+    '<button class="btn" id="savefile">Save file</button>' +
+    '<button class="btn ghost mt" id="copy">Copy to clipboard</button>' +
+    '<label class="f mt"><span>…or copy the text yourself</span>' +
+      '<textarea id="raw" readonly rows="6">' + esc(json) + '</textarea></label>',
+    function (root) {
+      root.querySelector('#savefile').onclick = function () {
+        var file = null;
+        try { file = new File([json], name, { type: 'application/json' }); } catch (e) {}
+        if (file && navigator.canShare && navigator.share) {
+          try {
+            if (navigator.canShare({ files: [file] })) {
+              navigator.share({ files: [file], title: name }).catch(function () {});
+              return;
+            }
+          } catch (e) {}
+        }
+        var url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+        var a = document.createElement('a');
+        a.href = url; a.download = name;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      };
+      root.querySelector('#copy').onclick = function () {
+        var ta = root.querySelector('#raw');
+        ta.select(); ta.setSelectionRange(0, json.length);
+        var done = function () { toast('Backup copied'); };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(json).then(done, function () { toast('Select the text and copy it'); });
+        } else { try { document.execCommand('copy'); done(); } catch (e) { toast('Select the text and copy it'); } }
+      };
+    }
+  );
+}
+
+function normalizeImport(obj) {
+  if (!obj || typeof obj !== 'object') throw new Error('That is not a backup file');
+  var s = blank();
+  if (obj.createdAt) s.createdAt = String(obj.createdAt);
+  if (obj.profile && typeof obj.profile === 'object') s.profile = obj.profile;
+  if (Array.isArray(obj.weights)) s.weights = obj.weights.filter(function (w) {
+    return w && typeof w.date === 'string' && typeof w.kg === 'number';
+  });
+  if (Array.isArray(obj.entries)) s.entries = obj.entries.filter(function (e) {
+    return e && typeof e.date === 'string' && typeof e.kcal === 'number';
+  }).map(function (e) {
+    if (!e.id) e.id = uid();
+    if (!e.ts) e.ts = 0;
+    return e;
+  });
+  if (obj.foods && typeof obj.foods === 'object') s.foods = obj.foods;
+  if (obj.settings && typeof obj.settings === 'object') s.settings = Object.assign(s.settings, obj.settings);
+  if (!s.profile && !s.weights.length && !s.entries.length) throw new Error('No data found in that file');
+  s.weights.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+  return s;
+}
+
+function importSheet() {
+  openSheet(
+    '<h2>Restore</h2>' +
+    '<p class="note" style="margin-top:-8px">This <b>replaces</b> everything currently stored ' +
+      '(' + S.entries.length + ' entries, ' + S.weights.length + ' weights). Back up first if in doubt.</p>' +
+    '<label class="f"><span>Backup file</span><input type="file" id="file" accept="application/json,.json,text/plain"></label>' +
+    '<label class="f"><span>…or paste the backup text</span><textarea id="paste" rows="5" placeholder="{ &quot;v&quot;: 1, … }"></textarea></label>' +
+    '<button class="btn" id="restore">Restore</button>',
+    function (root) {
+      var pasted = root.querySelector('#paste');
+      root.querySelector('#file').onchange = function (e) {
+        var f = e.target.files && e.target.files[0];
+        if (!f) return;
+        var r = new FileReader();
+        r.onload = function () { pasted.value = String(r.result); toast('File loaded — press Restore'); };
+        r.onerror = function () { toast('Could not read that file'); };
+        r.readAsText(f);
+      };
+      root.querySelector('#restore').onclick = function () {
+        var txt = pasted.value.trim();
+        if (!txt) { toast('Choose a file or paste the text'); return; }
+        var obj, next;
+        try { obj = JSON.parse(txt); }
+        catch (e) { toast('That is not valid JSON — paste the whole backup'); return; }
+        try { next = normalizeImport(obj); }
+        catch (err) { toast(err.message); return; }
+        if (!confirm('Restore ' + next.entries.length + ' entries and ' + next.weights.length +
+              ' weight readings? This replaces what is on this device now.')) return;
+        S = next;
+        save(); closeSheet(); location.hash = '#/'; render();
+        toast('Restored ' + next.entries.length + ' entries');
+      };
+    }
+  );
 }
 
 /* =========================== backfill =========================== */
@@ -1070,6 +1178,27 @@ render();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {
-    navigator.serviceWorker.register('./sw.js').catch(function () {});
+    navigator.serviceWorker.register('./sw.js').then(function (reg) {
+      var offer = function () {
+        toast('Update ready', function () { location.reload(); }, 'Reload', 15000);
+      };
+      // A worker reaching "installed" while another already controls the page
+      // means a newer version is cached and one reload away.
+      if (reg.waiting && navigator.serviceWorker.controller) offer();
+      reg.addEventListener('updatefound', function () {
+        var sw = reg.installing;
+        if (!sw) return;
+        sw.addEventListener('statechange', function () {
+          if (sw.state === 'installed' && navigator.serviceWorker.controller) offer();
+        });
+      });
+      // iOS suspends the app rather than reloading it, so re-check on return.
+      var lastCheck = Date.now();
+      document.addEventListener('visibilitychange', function () {
+        if (document.hidden || Date.now() - lastCheck < 9e5) return;
+        lastCheck = Date.now();
+        reg.update().catch(function () {});
+      });
+    }).catch(function () {});
   });
 }
