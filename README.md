@@ -16,28 +16,31 @@ dependencies, no build step: everything lives in `localStorage` on the device.
   have weighed in, and today's entries are listed underneath; tap one to edit or delete.
 - **History** — weight trend with a 7-day average, daily intake against budget,
   cumulative deficit, projected vs. measured weight change, and a week-by-week table.
-- **Settings** — profile, rollover cap, backfilling a missed day.
+- **Settings** — profile, the current week, backfilling a missed day, lookup
+  diagnostics, backup and restore.
 
 ## How the budget is calculated
 
 ```
-maintenance = Mifflin-St Jeor BMR(7-day average weight, height, age, sex) x activity
-dailyBudget = maintenance + goalKgPerWeek * 1100      (0.5 kg/week = 550 kcal/day)
-bank        = sum of (budget - eaten) over the earlier days of this week
-allowance   = dailyBudget + bank
+maintenance  = Mifflin-St Jeor BMR(7-day average weight, height, age, sex) x activity
+dailyBudget  = maintenance + goalKgPerWeek * 1100     (0.5 kg/week = 550 kcal/day)
+deficitGoal  = maintenance - dailyBudget
 ```
 
 The budget follows the **7-day average** weight, not the last reading, so day-to-day
-water swings do not move it. Unspent calories roll over nightly into the rest of the
-week; the week runs Monday–Sunday and the bank **resets Sunday at midnight**.
+water swings do not move it.
 
-The **first week starts the day you begin tracking**, not the Monday before it, and
-its budget is prorated to the days that remain — start on a Tuesday and you get a
-six-day week at 6x the daily budget, not seven. Days before that date never
-contribute to the rollover, so a midweek start cannot hand you a phantom surplus.
-Backfilling an entry earlier than your start date moves the start date back to it. The
-surplus carried into a day is capped at one day's budget by default (Settings) so a
-skipped day cannot hand you a 4000 kcal allowance.
+**Each day stands on its own.** Unspent calories do not carry into the next day and
+going over does not shrink tomorrow — every day is simply `dailyBudget`.
+
+The week is still tracked and shown, as `eaten of weekly budget`, but it is a
+**report, not a pool to spend from**: with no rollover, an underspent Monday does not
+make Tuesday bigger, so the home screen deliberately says "4,100 of 13,878" rather
+than "9,778 left" — the latter would imply calories you cannot actually reach. Weeks
+run Monday–Sunday. The **first week starts the day you begin tracking**, not the
+Monday before it, and its budget is prorated to the days that remain — start on a
+Tuesday and you get a six-day week at 6x the daily budget. Backfilling an entry
+earlier than your start date moves the start date back to it.
 
 After ~2 weeks of logging, the Deficit card compares projected against measured weight
 change and tells you whether your activity setting is off.

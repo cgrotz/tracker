@@ -51,7 +51,7 @@ function fmtShort(s) { return parseISO(s).toLocaleDateString(undefined, { day: '
 
 /* ---------- state ---------- */
 function blank() {
-  return { v: 1, createdAt: todayISO(), profile: null, weights: [], entries: [], pins: [], foods: {}, settings: { capRollover: true } };
+  return { v: 1, createdAt: todayISO(), profile: null, weights: [], entries: [], pins: [], foods: {}, settings: {} };
 }
 var S = (function load() {
   try {
@@ -59,7 +59,7 @@ var S = (function load() {
     if (!raw) return blank();
     var p = JSON.parse(raw), s = blank();
     for (var k in p) if (p[k] !== undefined) s[k] = p[k];
-    s.settings = Object.assign({ capRollover: true }, p.settings || {});
+    s.settings = Object.assign({}, p.settings || {});
     return s;
   } catch (e) { return blank(); }
 })();
@@ -114,20 +114,6 @@ function startDay() {
   var f = firstTracked();
   if (f && f < d) d = f;
   return d;
-}
-// Unspent (or overspent) calories from the earlier days of this week.
-function bankFor(date) {
-  var begin = startDay(), f = firstTracked();
-  var floor = (f && f > begin) ? f : begin;
-  var ws = weekStart(date), bank = 0;
-  for (var d = ws; d < date; d = addDays(d, 1)) {
-    if (d < floor) continue;
-    var b = budgetOn(d);
-    if (b == null) continue;
-    bank += b - consumedOn(d);
-  }
-  if (S.settings.capRollover) bank = Math.min(bank, budgetOn(date) || 0);
-  return Math.round(bank);
 }
 function weekStats(date) {
   var ws = weekStart(date), end = addDays(ws, 6), begin = startDay();
@@ -347,8 +333,7 @@ function ringArc(start, len, C) {
 function renderHome() {
   var today = todayISO();
   var budget = budgetOn(today);
-  var bank = budget == null ? 0 : bankFor(today);
-  var allowance = (budget || 0) + bank;
+  var allowance = budget || 0;   // each day stands alone; nothing carries over
   var consumed = consumedOn(today);
   var left = allowance - consumed;
   var week = weekStats(today);
@@ -392,11 +377,9 @@ function renderHome() {
             '</div>' +
           '</div>' +
           '<div class="meta">' +
-            '<div>' + n0(consumed) + ' of <b>' + n0(allowance) + '</b> today' +
-              (bank ? ' <span class="' + (bank > 0 ? 'pos' : 'neg') + '">(' + signed(bank) + ' carried over)</span>' : '') +
-            '</div>' +
-            '<div>Week' + (week.partial ? ' (' + week.days + ' days)' : '') + ': <b>' +
-              n0(week.left) + '</b> left of ' + n0(week.budget) + '</div>' +
+            '<div>' + n0(consumed) + ' of <b>' + n0(allowance) + '</b> today</div>' +
+            '<div>Week' + (week.partial ? ' (' + week.days + ' days)' : '') + ': ' +
+              n0(week.consumed) + ' of <b>' + n0(week.budget) + '</b></div>' +
             (deficit > 0 ? '<div class="dgoal">' + n0(deficit) + ' kcal deficit goal</div>' : '') +
           '</div>') +
       // Idle: grid on top, search below it (thumb reach). While searching the
@@ -723,15 +706,16 @@ function renderSettings() {
     '<div class="card"><h2>Today’s numbers</h2>' +
       '<div class="kv"><span>Maintenance (TDEE)</span><span>' + (m ? n0(m) + ' kcal' : '—') + '</span></div>' +
       '<div class="kv"><span>Daily budget</span><span>' + (b ? n0(b) + ' kcal' : '—') + '</span></div>' +
-      '<div class="kv"><span>Carried over</span><span>' + (b ? signed(bankFor(today)) + ' kcal' : '—') + '</span></div>' +
       '<div class="kv"><span>Weekly budget</span><span>' + (b ? n0(weekStats(today).budget) + ' kcal' : '—') + '</span></div>' +
     '</div>' +
     '<div class="card"><h2>Profile</h2><form id="p">' + profileFields(S.profile || {}) +
       '<button class="btn" type="submit">Save profile</button></form></div>' +
-    '<div class="card"><h2>Rollover</h2>' +
-      '<div class="toggle"><label for="cap">Cap carried-over surplus at one day’s budget</label>' +
-      '<input type="checkbox" id="cap"' + (S.settings.capRollover ? ' checked' : '') + '></div>' +
-      '<p class="note">Unspent calories roll into the rest of the week each night; the week resets Sunday at midnight. The cap stops a skipped day from handing you a huge allowance.</p>' +
+    '<div class="card"><h2>Week</h2>' +
+      '<div class="kv"><span>This week</span><span>' + fmtShort(weekStats(today).start) + ' – ' +
+        fmtShort(weekStats(today).end) + '</span></div>' +
+      '<p class="note">Each day stands on its own — unspent calories do not carry into the next ' +
+      'day, and going over does not shrink tomorrow. The week runs Monday to Sunday (your first ' +
+      'week started the day you began) and is shown for tracking, not as a pool to spend from.</p>' +
     '</div>' +
     '<div class="card"><h2>Weight</h2>' +
       '<button class="btn secondary" id="wt">' + (w ? 'Edit today’s weight (' + w.kg.toFixed(1) + ' kg)' : 'Log today’s weight') + '</button>' +
@@ -756,7 +740,6 @@ function renderSettings() {
     S.profile = readProfile(e.target);
     save(); renderSettings(); toast('Profile saved');
   };
-  app.querySelector('#cap').onchange = function (e) { S.settings.capRollover = e.target.checked; save(); };
   app.querySelector('#wt').onclick = function () { weightSheet(today); };
   app.querySelector('#wy').onclick = function () { backfillSheet(); };
   app.querySelector('#export').onclick = function () { exportSheet(); };
